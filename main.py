@@ -51,4 +51,37 @@ class FineTuningPipeline:
         attention_mask  = batch_encoder['attention_mask']
         return token_ids, attention_mask
     
+    def tokenize_dataset(self):
+        token_ids = []
+        attention_masks = []
+
+        for review in self.df_dataset['review_cleaned']:
+            tokens, masks  = self.tokenize(review)
+            token_ids.append(tokens)
+            attention_masks.append(masks)
+
+        token_ids  = torch.cat(token_ids, dim= 0)
+        attention_masks  = torch.cat(attention_masks, dim=0)
+        return token_ids, attention_masks
     
+    def create_dataloader(self):
+        train_ids, val_ids  = train_test_split(self.token_ids, test_size = self.val_size, shuffle=False)
+        train_masks, val_masks  = train_test_split(self.attention_masks, test_size = self.val_size, shuffle=False)
+
+        labels =torch.tensor(self.df_dataset['sentiment_encoded'].values)
+        train_labels, val_labels =train_test_split(labels, test_size = self.val_size, shuffle=False)
+        train_data  = TensorDataset(train_ids, train_masks, train_labels)
+        train_dataloader = DataLoader(train_data, shuffle=True, batch_size=16)
+        val_data  = TensorDataset(val_ids, val_masks, val_labels)
+        val_dataloader  = DataLoader(val_data, batch_size=16)
+
+        return train_dataloader, val_dataloader
+
+    def creates_scheduler(self):
+        num_training_steps = self.epochs* len(self.train_dataloader)
+        scheduler = get_linear_schedule_with_warmup(
+            self.optimzer,
+            num_warmup_steps=0,
+            num_training_step = num_training_steps
+        )
+        return scheduler
