@@ -85,3 +85,105 @@ class FineTuningPipeline:
             num_training_step = num_training_steps
         )
         return scheduler
+    
+    def set_seeds(self):
+        np.random.seed(self.seed)
+        torch.manual_seed(self.seed)
+        torch.cuda.manual_seed_all(self.seed)
+
+    def fine_tune(self):
+        loss_dict = {
+            'epoch': [i +1 for i in range(self.epochs)],
+            'average training loss':[],
+            'avarage validation loss': []
+        }
+
+        t0_train = datetime.now()
+        for epoch in range(0, self.epochs):
+            #train step
+            self.model.train()
+            training_loss = 0
+            t0_epoch  = datetime.now()
+
+            print(f'{"-"*20} Epoch {epoch + 1} {"-"*20}')
+            print('\nTarining:\n-------------------')
+            print(f'Start time:{t0_epoch}')
+            for batch in self.train_dataloader:
+                batch_token_ids  = batch[0].to(self.device)
+                batch_attention_mask = batch[1].to(self.device)
+                batch_labels  = batch[2].to(self.device)
+
+                self.model.zero_grad()
+                loss, logits  = self.model( batch_token_ids, 
+                                           token_type_ids = None,
+                                           attention_mask=batch_attention_mask, 
+                                           labels= batch_labels, return_dict=False)
+                training_loss += loss.item()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                self.optimzer.step()
+                self.scheduler.step()
+
+            average_train_loss = training_loss / len(self.train_dataloader)
+            time_epoch = datetime.now() - t0_epoch
+
+            print(f'Avarage Loss: {average_train_loss}')
+            print(f'Time taken: {time_epoch}')
+
+            # validation step
+            self.model.eval()
+            val_loss = 0
+            val_accuracy = 0
+            t0_val  = datetime.now()
+            print('\nValidation:\n--------------------')
+            print(f'Start Time: {t0_val}')
+
+            for batch in self.val_dataloader:
+                batch_token_ids = batch[0].to(self.device)
+                batch_attention_mask  = batch[1].to(self.device)
+                batch_labels =batch[2].to(self.device)
+
+                with torch.no_grad():
+                    (loss, logits) = self.model(batch_token_ids,token_type_ids=None,
+                                                 attention_mask = batch_attention_mask, 
+                                                 labels = batch_labels, return_dict= False )
+                    
+
+                logits  = logits.detach().cpu().numpy()
+                label_ids  = batch_labels.to('cpu').numpy()
+                val_loss += loss.item()
+                val_accuracy += self.calculate_accuracy(logits, label_ids)
+            average_val_accuracy  = val_accuracy / len(self.val_dataloader)
+            average_val_loss  = val_loss/ len(self.val_dataloader)
+            time_val  = datetime.now() - t0_val
+
+            print(f'Average Loss: {average_val_loss}')
+            print(f'Average Accuracy: {average_val_accuracy}')
+            print(f'Time taken: {time_val}\n')
+
+            loss_dict['avarage training loss'].append(average_train_loss)
+            loss_dict['avarage validation loss'].append(average_val_loss)
+
+        print(f'Total training time: {datetime.now() - t0_train}') 
+
+
+    def calculate_accuracy(self, preds, labels):
+        pred_flat  = np.argmax(preds, axis= 1).flatten()
+        labels_flat  = labels.flatten()
+        accuracy = np.sum(pred_flat == labels_flat)/ len(labels_flat)
+        return accuracy
+    
+    def predict(self, dataloader):
+        self.model.eval()
+        all_logits = []
+        
+        for batch in dataloader:
+            batch_token_ids, batch_attention_mask  = tuple(t.to(self.device) \
+                                                            for t in batch)[:2]
+            with torch.no_grad():
+                logits = self.model(batch_token_ids, batch_attention_mask)
+            all_logits.append(logits)
+        all_logits = torch.cat(all_logits, dim=0)
+        probs  = F.softmax(all_logits, dim=1).cpu().numpy()
+        return probs
+        
